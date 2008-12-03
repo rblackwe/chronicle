@@ -1,0 +1,96 @@
+#!/usr/bin/perl -w
+#
+#  A simple utility which will process each "*.txt" file inside a named
+# directory.
+#
+#  Any entries with a duplicate title will be alerted.
+#
+# Steve
+#
+
+use strict;
+use warnings;
+
+
+#
+#  Get the directory and ensure it exists.
+#
+my $dir = shift;
+die "Usage: $0 directory" unless ( defined($dir) );
+die "Not a directory : $dir" unless ( -d $dir );
+
+
+#
+#  The hash of arrays
+#
+my $titles;
+
+
+#
+#  Find the files.
+#
+foreach my $file ( sort( glob( $dir . "/*" ) ) )
+{
+
+    #
+    #  Skip non-files
+    #
+    next if ( -d $file );
+    next if ( $file =~ /~$/ );
+
+    #
+    #  Title for this entry.
+    #
+    my $title = undef;
+
+    #
+    #  Read each file, and look for the title.
+    #
+    open( IN, "<", $file )
+      or die "Failed to read $file - $!";
+    foreach my $line (<IN>)
+    {
+        $title = $2
+          if ( !defined($title)
+               && ( $line =~ /^(Subject|Title):(.*)/i ) );
+
+    }
+    close(IN);
+
+    #
+    #  Ignore entries with no title.
+    #
+    next if ( !$title );
+
+    #
+    #  Get current entries we might have found with
+    # this title; and add on the new one.
+    #
+    my $a = $titles->{ $title };
+    push( @$a, $file );
+    $titles->{ $title } = $a;
+}
+
+
+#
+#  Now look for dupes
+#
+my $fail = 0;
+foreach my $title ( keys %$titles )
+{
+    my $a = $titles->{ $title };
+
+    if ( ( scalar @$a ) > 1 )
+    {
+        print "Title: $title\n";
+        foreach my $file (@$a)
+        {
+            print "\t" . $file . "\n";
+        }
+
+        $fail = 1;
+    }
+}
+
+
+exit($fail);

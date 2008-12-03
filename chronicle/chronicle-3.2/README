@@ -1,0 +1,145 @@
+
+Homepage:
+    http://www.steve.org.uk/Software/chronicle/
+
+Mercurial Repository:
+    http://chronicle.repository.steve.org.uk/
+
+Sample Output:
+    http://www.steve.org.uk/Software/chronicle/demo/
+
+Real World Use:
+    http://blog.steve.org.uk/
+    http://blog.mail-scanning.com/
+
+
+
+The chronicle blog compiler
+---------------------------
+
+  Chronicle is a tool which will convert a directory of simple
+ text files into a static HTML weblog, (or blog if you prefer).
+
+  The system is intentionally simple, but it does support:
+
+  * Template based output.
+  * Support for RSS feeds.
+  * Support for tagged entries.
+  * Optional support for comments.
+
+
+
+
+Installation
+------------
+
+  It is possible to run the software without installing it, just
+ by placing blog entries in the ./blog directory and running
+ ./bin/chronicle.
+
+  However it is recommended you install the software system-wide
+ by running "make install" as root.
+
+  This will give you:
+
+    /usr/share/chronicle        <-  The theme directories.
+    /usr/bin/chronicle          <-  The main binary.
+    /usr/bin/chronicle-spooler  <-  A simple helper.
+    /etc/chroniclerc            <-  The global configuration file.
+
+  If you wish to customise the templates it is recommended you
+ make a copy of them with a new name, then edit that copy.  This
+ will prevent changes from being overwritten on upgrade.
+
+  The configuration file may be copied to ~/.chroniclerc for
+ per-user configuration.
+
+
+
+Blog Format
+-----------
+
+  The blog format is very simple.  Each file should start like this:
+
+  /--
+   title:  The title of my post
+   date: 12 August 2007
+   tags: foo, bar, baz
+
+   The text of the actual entry goes here.
+
+   However much there is of it.
+  \--
+
+
+
+  The entries are aided by a pseudo-header.  This header contains
+ entries which are used by Chronicle to build your blog.  The entries
+ themselves are not included in your output HTML.
+
+Title:
+   This holds the name of the post.  ("Subject:" may be used as a synonym.)
+   If neither "Title" or "Subject" are present the filename itself is
+ used.
+
+
+Date:
+   The date this entry was created.  If not present the creation time
+ of the file is used.
+
+
+Publish:
+  If you make use of the spooler, to automatically post pre-written entries
+ on particular days, this field will specify when an entry is made live.
+
+
+Tags:
+   If any tags are present they will be used to categorise the entry.
+
+
+
+Entry Cutting
+-------------
+
+  If you wish you may truncate a long entry via the special <cut> tag,
+ for example:.
+
+
+/--------------------------\
+This is a line of text
+<cut>This is hidden
+So is this
+</cut>
+This is displayed.
+\==========================/
+
+
+  Or, with specific test:
+
+/-------------------------------------------------\
+This is a line of text
+<cut text="Click to read more...">This is hidden
+So is this
+</cut>
+This is displayed.
+\=================================================/
+
+
+
+Comment Support
+---------------
+
+  The system supports the submission of user-supplied comments upon
+ posts, for more details please see the included file COMMENTS.
+
+
+
+Bugs?
+-----
+
+  Please report bugs to the author, where they will be fixed as
+ quickly as possible.
+
+
+Steve
+--

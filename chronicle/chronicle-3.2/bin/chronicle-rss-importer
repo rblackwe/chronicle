@@ -1,0 +1,220 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use Getopt::Long;
+use HTML::Entities;
+use LWP;
+use XML::RSSLite;
+
+
+#
+#  Configuration variables
+#
+my %CONFIG;
+
+
+#
+#  Parse arguments.
+#
+parseCommandLineArguments();
+
+
+#
+#  Validate any arguments.
+#
+validateCommandLineArguments();
+
+
+#
+#  Fetch the feed.
+#
+my $content = fetchRSSFeed( $CONFIG{ 'feed' } );
+
+
+#
+# Parse the feed
+#
+my %rssHash;
+parseRSS( \%rssHash, \$content );
+
+
+#
+#  Now import
+#
+processEntries(%rssHash);
+
+
+#
+#  All done.
+#
+
+
+
+=begin doc
+
+  Parse the command line arguments, if any.
+
+=end doc
+
+=cut
+
+sub parseCommandLineArguments
+{
+    if (
+        !GetOptions(
+
+                     "feed=s",     \$CONFIG{ 'feed' },
+                     "output=s",   \$CONFIG{ 'output' },
+                     "sequential", \$CONFIG{ 'sequential' },
+        )
+      )
+    {
+        exit;
+    }
+}
+
+
+
+=begin doc
+
+  Ensure we received the arguments we need, and that
+ those arguments look OK.
+
+=end doc
+
+=cut
+
+sub validateCommandLineArguments
+{
+
+    #
+    #  We need an output dir
+    #
+    if ( !$CONFIG{ 'output' } )
+    {
+        print "Output directory is mandatory.\n";
+        print "Please specificy via --output=...\n";
+        exit;
+    }
+    if ( !-d $CONFIG{ 'output' } )
+    {
+        print
+"Specified output directory [$CONFIG{'output'}] is not a directory!\n";
+        exit;
+    }
+
+    #
+    #  We need a feed
+    #
+    if ( !$CONFIG{ 'feed' } )
+    {
+        print "Please specify a feed to import, via --feed=http:/....\n";
+        exit;
+    }
+
+}
+
+
+
+=begin doc
+
+  Fetch the remote RSS feed.
+
+=end doc
+
+=cut
+
+sub fetchRSSFeed
+{
+    my ($uri) = (@_);
+
+    my $ua = LWP::UserAgent->new();
+    $ua->timeout(10);
+    $ua->agent('chronicle-importer');
+
+    my $response = $ua->get($uri);
+
+    if ( $response->is_success )
+    {
+        return ( $response->content() );
+    }
+    else
+    {
+        print "Failed to fetch feed: $uri\n";
+        print "\n";
+        print $response->message() . "\n";
+        exit;
+    }
+
+}
+
+
+
+=begin doc
+
+  Iterate over the items in our feed and write each one out to a
+ single file.
+
+=end doc
+
+=cut
+
+sub processEntries
+{
+    my (%entries) = (@_);
+
+    my $count = 1;
+
+    foreach my $item ( @{ $rssHash{ 'item' } } )
+    {
+
+        #
+        #  Get details from the feed.
+        #
+        my $title = $item->{ 'title' } || "no title";
+        my $date = $item->{ 'pubDate' } || $item->{ 'dc:date' } || undef;
+        my $body =
+             $item->{ 'description' }
+          || $item->{ 'content:encoded' }
+          || undef;
+        my $filename;
+
+
+        #
+        #  Build up a suitable filename.
+        #
+        if ( $CONFIG{ 'sequential' } )
+        {
+            $filename = $count . ".txt";
+        }
+        else
+        {
+            $filename = $title;
+            $filename =~ s/[^a-z0-9]/_/gi;
+            $filename .= ".txt";
+
+        }
+
+        #
+        #  Naive expansion.
+        #
+        if ( $body =~ m/&lt;/ )
+        {
+            $body = decode_entities($body);
+        }
+        $filename = $CONFIG{ 'output' } . "/" . $filename;
+        open( OUTPUT, ">", $filename )
+          or die "Failed to write to $filename - $!";
+        print OUTPUT <<EOF;
+Title: $title
+Date: $date
+
+$body
+EOF
+        close(OUTPUT);
+        $count += 1;
+    }
+
+}

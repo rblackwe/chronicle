@@ -1,0 +1,33 @@
+
+
+Primary Author
+--------------
+
+  Steve Kemp <steve [at] uk.org.steve>
+
+
+Contributions
+-------------
+
+  Listed alphabetically by surname.
+
+  Byron Clark [byron [at] name.theclarkfamily.name]
+   - Support non-GMT timezones
+
+  Josh Grams [josh [@] com.qualdan]
+   - Added better base URL detection.
+   - Added chronological sorting for months & shorter month-URLs.
+
+  Sascha Korzen [korzen [@] .de.fh-luh.cc]
+   - Added the optional calendar.
+
+  MJ Ray [mjr [@] coop.phonecoop]
+   - Added RSSv1 date format.
+   - Added reltop.
+
+  Felipe Sateler [fsateler [@] com.gmail]
+   - Produced a Debian package for the software.
+   - Provided fixup for the default comment handling of the default theme.
+
+  Bob Walker [bob [@] uk.org.randomness]
+   - Added titles to RSS feeds

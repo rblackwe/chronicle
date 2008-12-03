@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<rss version='2.0' xmlns:lj='http://www.livejournal.org/rss/lj/1.0/'>
+	<channel>
+		<title><!-- tmpl_var name='blog_title' --> - Entries from <!-- tmpl_var name='month_name' --> <!-- tmpl_var name='year' --></title>
+		<description>Entries from <!-- tmpl_var name='month_name' --> <!-- tmpl_var name='year' --></description>
+                <link><!-- tmpl_var name='top' --></link>
+
+	<!-- tmpl_loop name="entries" -->
+	<item>
+		<title><!-- tmpl_var name="title" escape='html' --></title>
+		<link><!-- tmpl_var name='top' --><!-- tmpl_var name='link' --></link>        
+		<guid isPermaLink="true"><!-- tmpl_var name='top' --><!-- tmpl_var name='link' --></guid>
+                <pubDate><!-- tmpl_var name='pubdate' --></pubDate>
+		<description><!-- tmpl_var name="body" escape='html' --></description>
+	</item>
+	<!-- /tmpl_loop -->
+        </channel>
+</rss>

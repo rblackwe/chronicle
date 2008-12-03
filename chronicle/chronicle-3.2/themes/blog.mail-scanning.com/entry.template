@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+ <head>
+
+  <title><!-- tmpl_var name='blog_title' -->: <!-- tmpl_var name='title' --></title>
+  <link rel="stylesheet" type="text/css" media="screen" href="<!-- tmpl_var name='top' -->layout.css">
+  <link rel="stylesheet" href="<!-- tmpl_var name='top' -->bubbles.css" type="text/css" media="screen" charset="utf-8" />
+<!-- tmpl_if name='comments_enabled' -->
+  <script type="text/JavaScript" src="<!-- tmpl_var name='top' -->ajax.js"></script>
+<!-- /tmpl_if -->
+
+ </head>
+ <body>
+
+<!-- tmpl_include name='menu.inc' -->
+
+ <div id="content">
+ <div id="right">
+ <h1><a href="/">Mail-Scanning Blog</a></h1>
+ <div class="entry">
+  <h2><!-- tmpl_var name='title' --></h2>
+  <div class="date"><!-- tmpl_var name='date' --></div>
+  <div class="body"> <blockquote><!-- tmpl_var name='body' --> </blockquote></div>
+  <!-- tmpl_if name='tags' -->
+  <div class="tags">Tags: <!-- tmpl_loop name='tags' --><a href="<!-- tmpl_var name='top' -->tags/<!-- tmpl_var name='tag' escape='html' -->"><!-- tmpl_var name='tag' escape='html' --></a><!-- tmpl_if name="__last__" -->.<!-- tmpl_else -->, <!-- /tmpl_if --><!-- /tmpl_loop --></div>
+   <!-- /tmpl_if -->
+  </div>
+
+
+<!-- tmpl_include name="comment-loop.inc" -->
+<!-- tmpl_include name="comment-form.inc" -->
+
+</div>
+<div id="left">
+ <div class="box">
+ <!-- tmpl_if name='datecloud' -->
+  <!-- tmpl_include name='archive.inc' -->
+<!-- /tmpl_if name='datecloud' -->
+
+
+ </div>
+ <div class="box2">
+<!-- tmpl_if name='tagcloud' -->
+ <!-- tmpl_include name='tags.inc' -->
+<!-- /tmpl_if name='tagcloud' -->
+ </div>
+
+</div>
+</div>
+<div id="footer">
+<span style="float: right;">&copy 2007-2008 <a href="http://pink-pony-productions.com/">Pink Pony Productions</a></span>
+</div>
+</body>
+</html>
+

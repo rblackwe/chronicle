@@ -1,0 +1,513 @@
+#!/usr/bin/perl -w
+
+=head1 NAME
+
+chronicle-spooler - Automatically post pre-written entries.
+
+=cut
+
+=head1 SYNOPSIS
+
+
+  Path Options:
+
+   --config         Specify a configuration file to read.
+   --spool-dir      Specify where pending entries are located.
+   --live-dir       Specify where the entries should be moved to.
+
+
+  Post-Spool Commands:
+
+   --post-move   Specify a command to execute once entries have been moved.
+
+  Optional Features:
+
+   --test        Only report on what would be executed.
+
+  Help Options:
+
+   --help        Show the help information for this script.
+   --manual      Read the manual for this script.
+
+=cut
+
+
+=head1 ABOUT
+
+  chronicle-spooler is a companion scrip to the chronicle blog compiler.
+
+  It is designed to facilitate posting new entries automatically upon
+ particular dates.  (ie. If you have ten written blog entries in a spool
+ directory it will move them into place upon the date you've specified.)
+
+=cut
+
+
+=head1 DATE SPECIFICATION
+
+  To specify the date a particular entry should be made live you
+ must add another pseudo-header to your blog entry files, as follows:
+
+=for example begin
+
+    Title:  This is the title of the blog post
+    Date:  2nd March 2007
+    Publish: 15th April 2008
+    Tags: one, two, three, long tag
+
+    The text of your entry goes here.
+
+=for example end
+
+  In this example we know that this entry will be made live upon the
+ 15th April 2008, and not before.
+
+=cut
+
+=head1 AUTHOR
+
+ Steve
+ --
+ http://www.steve.org.uk/
+
+=cut
+
+=head1 LICENSE
+
+Copyright (c) 2008 by Steve Kemp.  All rights reserved.
+
+This module is free software;
+you can redistribute it and/or modify it under
+the same terms as Perl itself.
+The LICENSE file contains the full text of the license.
+
+=cut
+
+
+use strict;
+use warnings;
+
+
+use Date::Parse;
+use File::Copy;
+use Getopt::Long;
+use Pod::Usage;
+
+
+#
+#  Release number
+#
+#  NOTE:  Set by 'make release'.
+#
+my $RELEASE = '3.2';
+
+
+#
+#  Our configuration options.
+#
+my %CONFIG;
+
+
+#
+#  Read the global and per-user configuration files, if they exist.
+#
+readConfigurationFile("/etc/chroniclerc");
+readConfigurationFile( $ENV{ 'HOME' } . "/.chroniclerc" );
+
+
+#
+#  Parse the command line arguments.
+#
+parseCommandLineArguments();
+
+
+#
+#  Another configuration file?
+#
+readConfigurationFile( $CONFIG{ 'config' } ) if ( defined $CONFIG{ 'config' } );
+
+
+#
+#  Make sure we have arguments which are sane.
+#
+#  Specifically we need an input directory and an output directory.
+#
+#
+sanityCheckArguments();
+
+
+#
+#  Find the potentially pending entries.
+#
+my @files = findPendingPosts( $CONFIG{ 'spool-dir' } );
+
+
+#
+#  Process each entry
+#
+my $live = 0;
+foreach my $entry ( sort(@files) )
+{
+    if ( shouldBeLive($entry) )
+    {
+        if ( $CONFIG{ 'test' } )
+        {
+            print "test: make entry live: $entry\n";
+        }
+        else
+        {
+            makeEntryLive($entry);
+            $live += 1;
+        }
+    }
+}
+
+
+#
+#  If we should run our command do so.
+#
+if ( ( $CONFIG{ 'post-move' } ) && $live )
+{
+    if ( $CONFIG{ 'test' } )
+    {
+        print "test: should run: $CONFIG{'post-move'}\n";
+    }
+    else
+    {
+        system( $CONFIG{ 'post-move' } );
+    }
+}
+
+
+
+#
+#  All done.
+#
+exit;
+
+
+
+=begin doc
+
+  Parse the command line arguments this script was given.
+
+=end doc
+
+=cut
+
+sub parseCommandLineArguments
+{
+    my $HELP    = 0;
+    my $MANUAL  = 0;
+    my $VERSION = 0;
+
+    #
+    #  Parse options.
+    #
+    if (
+        !GetOptions(
+
+            # input / output
+            "spool-dir=s", \$CONFIG{ 'spool-dir' },
+            "live-dir=s",  \$CONFIG{ 'live-dir' },
+
+            # testing?
+            "test", \$CONFIG{ 'test' },
+
+            # command?
+            "post-move=s", \$CONFIG{ 'post-move' },
+
+            # Help options
+            "help",    \$HELP,
+            "manual",  \$MANUAL,
+            "verbose", \$CONFIG{ 'verbose' },
+            "version", \$VERSION,
+
+        )
+      )
+    {
+        exit;
+    }
+
+    pod2usage(1) if $HELP;
+    pod2usage( -verbose => 2 ) if $MANUAL;
+
+    if ($VERSION)
+    {
+        print("chronicle release $RELEASE\n");
+        exit;
+    }
+}
+
+
+
+=begin doc
+
+  Read the specified configuration file if it exists.
+
+=end doc
+
+=cut
+
+sub readConfigurationFile
+{
+    my ($file) = (@_);
+
+    #
+    #  If it doesn't exist ignore it.
+    #
+    return if ( !-e $file );
+
+
+    my $line = "";
+
+    open( FILE, "<", $file ) or die "Cannot read file '$file' - $!";
+    while ( defined( $line = <FILE> ) )
+    {
+        chomp $line;
+        if ( $line =~ s/\\$// )
+        {
+            $line .= <FILE>;
+            redo unless eof(FILE);
+        }
+
+        # Skip lines beginning with comments
+        next if ( $line =~ /^([ \t]*)\#/ );
+
+        # Skip blank lines
+        next if ( length($line) < 1 );
+
+        # Strip trailing comments.
+        if ( $line =~ /(.*)\#(.*)/ )
+        {
+            $line = $1;
+        }
+
+        # Find variable settings
+        if ( $line =~ /([^=]+)=([^\n]+)/ )
+        {
+            my $key = $1;
+            my $val = $2;
+
+            # Strip leading and trailing whitespace.
+            $key =~ s/^\s+//;
+            $key =~ s/\s+$//;
+            $val =~ s/^\s+//;
+            $val =~ s/\s+$//;
+
+            # command expansion?
+            if ( $val =~ /(.*)`([^`]+)`(.*)/ )
+            {
+
+                # store
+                my $pre  = $1;
+                my $cmd  = $2;
+                my $post = $3;
+
+                # get output
+                my $output = `$cmd`;
+                chomp($output);
+
+                # build up replacement.
+                $val = $pre . $output . $post;
+            }
+
+            # Store value.
+            $CONFIG{ $key } = $val;
+        }
+    }
+
+    close(FILE);
+}
+
+
+
+=begin doc
+
+  Sanity check our arguments, and setup to make sure there is nothing
+ obviously broken.
+
+=end doc
+
+=cut
+
+sub sanityCheckArguments
+{
+    if (    ( !$CONFIG{ 'spool-dir' } )
+         || ( !-d $CONFIG{ 'spool-dir' } ) )
+    {
+        print <<EOF;
+
+  Please specify the spool directory, which contains the entries which
+ are to be moved into the live directory in the future.
+
+EOF
+        exit;
+    }
+
+    if (    ( !$CONFIG{ 'live-dir' } )
+         || ( !-d $CONFIG{ 'live-dir' } ) )
+    {
+        print <<EOF;
+
+  Please specify the output directory into which entries should be
+ moved to make them live.
+
+EOF
+        exit;
+    }
+}
+
+
+
+=begin doc
+
+  Find any files that might be in the pending directory.
+
+=end doc
+
+=cut
+
+sub findPendingPosts
+{
+    my ($dir) = (@_);
+
+    my $pattern = "*";
+    my @files;
+
+    foreach my $file ( sort( glob("$dir/$pattern") ) )
+    {
+        push( @files, $file ) unless ( -d $file );
+    }
+
+    return (@files);
+}
+
+
+=begin doc
+
+  Read the given file and see if it should be published now.
+  That means that the file contained a "Publish:" pseudo-header
+ which is either in the past, or equal to todays date.
+
+=end doc
+
+=cut
+
+sub shouldBeLive
+{
+    my ($file) = (@_);
+
+    #
+    #  If the file doesn't exist we don't publish it.  Huh?
+    #
+    return 0 if ( !-e $file );
+
+    #
+    #  Look for a header
+    #
+    my $header = "";
+
+    open( FILE, "<", $file )
+      or die "Failed to read file $file - $!";
+
+    foreach my $line (<FILE>)
+    {
+        if (    ( $line =~ /^Publish:(.*)/i )
+             && ( !length($header) ) )
+        {
+            $header = $1;
+
+            # Strip leading and trailing whitespace.
+            $header =~ s/^\s+//;
+            $header =~ s/\s+$//;
+        }
+    }
+    close(FILE);
+
+    #
+    #  No header?  Not to be published
+    #
+    return 0 if ( length($header) < 1 );
+
+    #
+    #  OK we got a header - is it current / past?
+    #
+    my $today = time;
+    if ( !defined($today) )
+    {
+        print "FAILED TO FIND TODAY\n";
+        return 0;
+    }
+
+    #
+    #  Date of entry
+    #
+    my $ent = str2time($header);
+    if ( !defined($ent) )
+    {
+        print "FAILED TO PARSE: '$header'\n";
+        return 0;
+    }
+
+
+    #
+    #  Do the date test.
+    #
+    if ( $ent < $today )
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+
+
+=begin doc
+
+  Move the specified file into our "live" directory.
+
+=end doc
+
+=cut
+
+sub makeEntryLive
+{
+    my ($file) = (@_);
+
+
+    if ( -d $CONFIG{ 'live-dir' } )
+    {
+
+        #
+        #  Is there already a file there with that name?
+        #
+        #  If so don't truncate it.
+        #
+        my $dir  = $file;
+        my $base = $file;
+        if ( $base =~ /^(.*)[\\\/](.*)$/ )
+        {
+            $dir  = $1;
+            $base = $2;
+        }
+
+        while ( -e "$CONFIG{'live-dir'}/$base" )
+        {
+            $base = "x$base";
+        }
+
+        #
+        #  Moving
+        #
+        File::Copy::move( $file, $CONFIG{ 'live-dir' } . "/" . $base );
+    }
+    else
+    {
+        print "Weirdness  $CONFIG{'live-dir'} is not a directory!\n";
+        exit;
+    }
+}

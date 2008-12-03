@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version='2.0' xmlns:lj='http://www.livejournal.org/rss/lj/1.0/'>
+	<channel>
+		<title><!-- tmpl_var name='blog_title' --> - Entries tagged <!-- tmpl_var name='tagname' escape='html' --></title>
+		<description>Entries tagged <!-- tmpl_var name='tagname' escape='html' --></description>
+                <link><!-- tmpl_var name='top' --></link>
+
+	<!-- tmpl_loop name="entries" -->
+	<item>
+		<title><!-- tmpl_var name="title" escape='html' --></title>
+		<link><!-- tmpl_var name='top' --><!-- tmpl_var name='link' --></link>        
+		<guid isPermaLink="true"><!-- tmpl_var name='top' --><!-- tmpl_var name='link' --></guid>
+                <pubDate><!-- tmpl_var name='pubdate' --></pubDate>
+		<description><!-- tmpl_var name="body" escape='html' --></description>
+	</item>
+	<!-- /tmpl_loop -->
+        </channel>
+</rss>

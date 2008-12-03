@@ -1,0 +1,20 @@
+
+Migrating to Chronicle
+----------------------
+
+  Included with this release is the utility script `chronicle-rss-importer`
+ which will allow you to import any entries which are available as an
+ RSS feed from your current platform.
+
+  Usage is as simple as:
+
+    chronicle-rss-importer --feed=http://blog.steve.org.uk/index.rss \
+     --output=/path/to/write/entries/to   [--sequential]
+
+  This will fetch the remote feed, parse it into individual entries and
+ write each on out to a new file beneath the specified output directory.
+
+
+
+Steve
+--

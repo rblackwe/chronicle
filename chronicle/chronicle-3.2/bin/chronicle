@@ -1,0 +1,2416 @@
+#!/usr/bin/perl -w
+
+=head1 NAME
+
+chronicle - A blog compiler.
+
+=cut
+
+=head1 SYNOPSIS
+
+
+  Path Options:
+
+   --comments       Specify the path to the optional comments directory.
+   --config         Specify a configuration file to read.
+   --input          Specify the input directory to use.
+   --output         Specify the directory to write output to.
+   --theme-dir      Specify the path to the theme templates.
+   --theme          Specify the theme to use.
+   --pattern        Specify the pattern of files to work with.
+   --url-prefix     Specify the prefix to the live blog.
+
+
+  Blog Entry Options:
+
+   --format      Specify the format of your entries, HTML/textile/markdown.
+
+  Pre & Post-Build Commands:
+
+   --pre-build   Specify a command to execute prior to building the blog.
+   --post-build  Specify a command to execute once the blog has been built.
+
+  Optional Features:
+
+   --force        Force the copying of static files from the blog theme.
+   --no-archive   Don't create an archive page.
+   --no-cache     Don't use the optional memcached features, even if available.
+   --no-calendar  Don't use the optional calendar upon the index.
+   --no-comments  Don't allow comments to be posted.
+   --comment-days Specify the number maximum age of posts to accept comments.
+   --no-tags      Don't produce any tag pages.
+   --lower-case   Lower-case all filenames which are output.
+
+
+  Help Options:
+
+   --help        Show the help information for this script.
+   --manual      Read the manual for this script.
+   --verbose     Show useful debugging information.
+   --version     Show the version number and exit.
+
+=cut
+
+
+=head1 ABOUT
+
+  Chronicle is a simple tool to convert a collection of text files,
+ located within a single directory, into a blog consisting of static
+ HTML files.
+
+  It supports only the bare minimum of features which are required
+ to be useful:
+
+   * Tagging support.
+
+   * RSS support.
+
+   * Archive support.
+
+  The obvious deficiencies are:
+
+   * Lack of support for instant commenting.
+
+   * Lack of pingback/trackback support.
+
+  Having said that it is a robust, stable, and useful system.
+
+=cut
+
+
+=head1 BLOG FORMAT
+
+  The format of the text files we process is critical to the output
+ pages.  Each entry should look something like this:
+
+=for example begin
+
+    Title:  This is the title of the blog post
+    Date:  2nd March 2007
+    Tags: one, two, three, long tag
+
+    The text of your entry goes here.
+
+=for example end
+
+  In this example we can see that the entry itself has been prefaced
+ with a small header.  An entry header is contains three optional lines,
+ if these are not present then there are sensible defaults as described
+ below:
+
+=over 8
+
+=item Title:
+Describes the title of the post.  If not present the filename of the entry
+is used instead.  "Subject:" may also be used.
+
+=item Subject:
+This is a synonym for 'Title:'.
+
+=item Date:
+The date the post was written.  If not present the creation time of the
+file is used instead.
+
+=item Publish:
+This header is removed from all entries, and is used by the chronicle-spooler script.
+
+=item Tags:
+Any tags which should be associated with the entry, separated by commas.
+
+=back
+
+  The text of the entry itself is assumed to be HTML, however if you
+ have the optional modules installed you may write it in Markdown or
+ Textile formats - if they are not present you will receive a message
+ informing you of the names of the required Perl modules.
+
+  You may specify the format of your entries either in the configuration
+ file, or via the command line flag B<--format>.
+
+=cut
+
+
+=head1 CONFIGURATION
+
+  The configuration of the software is minimal, and generally performed
+ via the command line arguments.  However it is possible to save settings
+ either in the file global /etc/chroniclerc or the per-user ~/.chroniclerc
+ file.
+
+  If you wish you may pass the name of another configuration file to
+ the script with the B<--config> flag.  This will be read after the
+ previous two files, and may override any settings which are present.
+
+  The configuration file contains lines like these:
+
+=for example begin
+
+   input  = /home/me/blog
+
+   output = /var/www/blog
+
+   format = markdown
+
+=for example end
+
+  Keys which are unknown are ignored.
+
+=cut
+
+
+=head1 OPTIONAL CACHING
+
+  To speed the rebuilding of a large blog the compiler may use a local
+ Memcached daemon, if installed and available.
+
+  To install this, under a Debian GNU/Linux system please run:
+
+=for example begin
+
+    apt-get update
+    apt-get install memcached libcache-memcached-perl
+
+=for example end
+
+  You may disable this caching behaviour with --no-cache, and see the
+ effect with --verbose.
+
+=cut
+
+=head1 OPTIONAL CALENDAR
+
+  If the 'HTML::CalendarMonthSimple' module is available each blog will
+ contain a simple month-view of the current month upon the index.
+
+  To disable this invoke the program with '--no-calendar'.
+
+=cut
+
+
+=head1 OPTIONAL COMMENTING
+
+  Included with the chronicle code you should find the file
+ cgi-bin/comments.cgi.
+
+  This file is designed to write submitted comments to the local
+ filesystem of your web-server.  If you install that, and edit the
+ path at the start of the script you should be able to include
+ comments in your blog.
+
+  In short there are three things you need to do:
+
+=over 8
+
+=item  Install the CGI script and edit the path at the start.
+
+=item  Copy the output comments to your local blog source.
+
+=item  Run this script again with --comments=./path/to/comments
+
+=back
+
+  This should include the comments in the static output.  More
+ explicit instructions are provided within the file 'COMMENTS'
+ included within the distribution.
+
+=cut
+
+
+=head1 AUTHOR
+
+ Steve
+ --
+ http://www.steve.org.uk/
+
+=cut
+
+=head1 LICENSE
+
+Copyright (c) 2007-2008 by Steve Kemp.  All rights reserved.
+
+This module is free software;
+you can redistribute it and/or modify it under
+the same terms as Perl itself.
+The LICENSE file contains the full text of the license.
+
+=cut
+
+
+use strict;
+use warnings;
+
+
+use Date::Parse;
+use Date::Format;
+use File::Copy;
+use File::Path;
+use Getopt::Long;
+use HTML::Template;
+use Pod::Usage;
+use Time::Local;
+
+
+#
+#  Release number
+#
+#  NOTE:  Set by 'make release'.
+#
+my $RELEASE = '3.2';
+
+#
+#  The names of the months.  Posted early to allow i18n users.
+#
+my @names =
+  qw( January February March April May June July August September October November December );
+
+#
+#  Setup default options.
+#
+my %CONFIG = setupDefaultOptions();
+
+
+#
+#  Read the global and per-user configuration files, if they exist.
+#
+readConfigurationFile("/etc/chroniclerc");
+readConfigurationFile( $ENV{ 'HOME' } . "/.chroniclerc" );
+
+
+#
+#  Parse the command line arguments.
+#
+parseCommandLineArguments();
+
+
+#
+#  Another configuration file?
+#
+readConfigurationFile( $CONFIG{ 'config' } ) if ( defined $CONFIG{ 'config' } );
+
+
+#
+#  Make sure we have arguments which are sane.
+#
+#  Specifically we want to cope with the "new", "theme-dir", and "theme"
+# arguments.
+#
+#
+sanityCheckArguments();
+
+
+#
+#  Listing themes?
+#
+if ( $CONFIG{ 'list-themes' } )
+{
+    listThemes( $CONFIG{ 'theme-dir' } );
+    exit;
+}
+
+#  Should we run something before we start?
+#
+if ( $CONFIG{ 'pre-build' } )
+{
+    $CONFIG{ 'verbose' } && print "Running command: $CONFIG{'pre-build'}\n";
+
+    system( $CONFIG{ 'pre-build' } );
+}
+
+
+#
+#  Parse each of the given text files, and build up a data-structure
+# we can use to create our pages.
+#
+#  The data-structure is a hash of arrays.  The hash key is the blog
+# entry's filename, and the array stored as the hash's value has
+# keys such as:
+#
+#   tags  => [ 'test', 'testing' ]
+#   date  => '1st july 2007'
+#   title => 'Some title'
+#
+#
+my %data = createDataStructure();
+
+#
+#  Find each unique tag used within our entries.
+#
+my %all_tags;
+%all_tags = findAllTags() unless ( $CONFIG{ 'no-tags' } );
+
+#
+#  Find each unique month + year we've used.
+#
+my %all_dates;
+%all_dates = findAllMonths() unless ( $CONFIG{ 'no-archive' } );
+
+
+#
+#  Now create the global tag + date loops which are used for our
+# sidebar.
+#
+my %CLOUD;
+$CLOUD{ 'tag' } = createTagCloud(%all_tags) unless ( $CONFIG{ 'no-tags' } );
+$CLOUD{ 'archive' } = createDateCloud(%all_dates)
+  unless ( $CONFIG{ 'no-archive' } );
+
+
+
+#
+#  Create the output directories.
+#
+mkpath( $CONFIG{ 'output' }, 0, 0755 ) if ( !-d $CONFIG{ 'output' } );
+foreach my $tag ( keys %all_tags )
+{
+    mkpath( "$CONFIG{'output'}/tags/$tag", 0, 0755 );
+}
+foreach my $date ( keys %all_dates )
+{
+    next unless ( $date =~ /^([0-9]{4})-([0-9]{2})/ );
+    mkpath( "$CONFIG{'output'}/archive/$1/$2", 0, 0755 );
+}
+
+
+#
+#  Output each static page.
+#
+$CONFIG{ 'verbose' } && print "Creating static pages:\n";
+foreach my $file ( keys %data )
+{
+    outputStaticPage($file);
+}
+
+
+
+#
+#  Build an output page for every tag which has ever been used.
+#
+foreach my $tagName ( sort keys %all_tags )
+{
+    $CONFIG{ 'verbose' } && print "Creating tag page: $tagName\n";
+
+    outputTagPage($tagName);
+}
+
+
+
+#
+#  Now build the archive pages.
+#
+foreach my $date ( keys(%all_dates) )
+{
+    $CONFIG{ 'verbose' } && print "Creating archive page: $date\n";
+
+    outputArchivePage($date);
+}
+
+
+
+#
+#  Finally out the most recent entries for the front-page.
+#
+outputIndexPage();
+
+
+
+#
+#  Copy any static files into place.
+#
+copyStaticFiles();
+
+
+#
+#  Post-build command?
+#
+if ( $CONFIG{ 'post-build' } )
+{
+    $CONFIG{ 'verbose' } && print "Running command: $CONFIG{'post-build'}\n";
+
+    system( $CONFIG{ 'post-build' } );
+}
+
+
+#
+#  All done.
+#
+exit;
+
+
+
+=begin doc
+
+  Setup the default options we'd expect into our global configuration hash.
+
+=end doc
+
+=cut
+
+sub setupDefaultOptions
+{
+    my %CONFIG;
+
+    #
+    #  Text directory.
+    #
+    $CONFIG{ 'input' }    = "./blog";
+    $CONFIG{ 'comments' } = '';
+
+    #
+    #  Output directory.
+    #
+    $CONFIG{ 'output' } = "./output";
+
+    #
+    #  Theme setup
+    #
+    $CONFIG{ 'theme-dir' } = "./themes/";
+    $CONFIG{ 'theme' }     = "default";
+
+    #
+    #  prefix for all links.
+    #
+    $CONFIG{ 'url-prefix' } = "";
+
+    #
+    #  Default input format
+    #
+    $CONFIG{ 'format' } = 'html';
+
+    #
+    #  Entries per-page for the index.
+    #
+    $CONFIG{ 'entry-count' } = 10;
+
+    #
+    #  Don't overwrite files by default
+    #
+    $CONFIG{ 'force' } = 0;
+
+    #
+    #  Comments enabled globally.
+    #
+    $CONFIG{ 'comment-days' } = 0;
+
+
+    return (%CONFIG);
+}
+
+
+
+=begin doc
+
+  Parse the command line arguments this script was given.
+
+=end doc
+
+=cut
+
+sub parseCommandLineArguments
+{
+    my $HELP    = 0;
+    my $MANUAL  = 0;
+    my $VERSION = 0;
+
+    #
+    #  Parse options.
+    #
+    if (
+        !GetOptions(
+
+            # Help options
+            "help",        \$HELP,
+            "manual",      \$MANUAL,
+            "verbose",     \$CONFIG{ 'verbose' },
+            "version",     \$VERSION,
+            "list-themes", \$CONFIG{ 'list-themes' },
+
+            # paths
+            "comments=s",  \$CONFIG{ 'comments' },
+            "config=s",    \$CONFIG{ 'config' },
+            "input=s",     \$CONFIG{ 'input' },
+            "output=s",    \$CONFIG{ 'output' },
+            "theme-dir=s", \$CONFIG{ 'theme-dir' },
+            "theme=s",     \$CONFIG{ 'theme' },
+            "pattern=s",   \$CONFIG{ 'pattern' },
+
+            # optional
+            "force",          \$CONFIG{ 'force' },
+            "no-tags",        \$CONFIG{ 'no-tags' },
+            "no-cache",       \$CONFIG{ 'no-cache' },
+            "no-calendar",    \$CONFIG{ 'no-calendar' },
+            "no-comments",    \$CONFIG{ 'no-comments' },
+            "no-archive",     \$CONFIG{ 'no-archive' },
+            "lower-case",     \$CONFIG{ 'lower-case' },
+            "comment-days=s", \$CONFIG{ 'comment-days' },
+
+            # input format.
+            "format=s", \$CONFIG{ 'format' },
+
+            # prefix
+            "url-prefix=s", \$CONFIG{ 'url_prefix' },
+
+            # commands
+            "pre-build=s",  \$CONFIG{ 'pre-build' },
+            "post-build=s", \$CONFIG{ 'post-build' },
+
+            # title
+            "blog-title=s",    \$CONFIG{ 'blog_title' },
+            "blog-subtitle=s", \$CONFIG{ 'blog_subtitle' },
+
+
+        ) )
+    {
+        exit;
+    }
+
+    pod2usage(1) if $HELP;
+    pod2usage( -verbose => 2 ) if $MANUAL;
+
+    if ($VERSION)
+    {
+        print("chronicle release $RELEASE\n");
+        exit;
+    }
+}
+
+
+
+=begin doc
+
+  Create our global data-structure, by reading each of the blog
+ files and extracting:
+
+  1.  The title of the entry.
+
+  2.  Any tags which might be present.
+
+  3.  The date upon which it was made.
+
+=end doc
+
+=cut
+
+sub createDataStructure
+{
+    my %results;
+
+    #
+    #  Did the user override the default pattern?
+    #
+    my $pattern = $CONFIG{ 'pattern' } || "*";
+
+
+
+    #
+    #  Find the filenames.
+    #
+    foreach my $file ( sort( glob( $CONFIG{ 'input' } . "/" . $pattern ) ) )
+    {
+
+        #
+        #  Ignore directories.
+        #
+        next if ( -d $file );
+
+        #
+        #  Read the entry and store all the data away as a
+        # hash element keyed upon the (unique) filename.
+        #
+        my $result = readBlogEntry($file);
+        $results{ $file } = $result if ($result);
+
+    }
+
+    #
+    #  Make sure we found some entries.
+    #
+    if ( scalar( keys(%results) ) < 1 )
+    {
+        print <<EOF;
+
+  There were no files found in the input directory $CONFIG{'input'}
+ which matched the pattern '$pattern'.
+
+  Aborting.
+
+EOF
+        exit;
+    }
+
+    return %results;
+}
+
+
+
+=begin doc
+
+  Find each distinct tag which has been used within blog entries,
+ and the number of times each one has been used.
+
+=end doc
+
+=cut
+
+sub findAllTags
+{
+    my %allTags;
+
+    foreach my $f ( keys %data )
+    {
+        my $h = $data{ $f };
+        my $tags = $h->{ 'tags' } || undef;
+        foreach my $t (@$tags)
+        {
+            if ( $t->{ 'tag' } )
+            {
+                $allTags{ $t->{ 'tag' } } += 1;
+            }
+        }
+    }
+
+    return (%allTags);
+}
+
+
+
+=begin doc
+
+  Create a structure for a tag cloud.
+
+=end doc
+
+=cut
+
+sub createTagCloud
+{
+    my (%unique) = (@_);
+
+    my $results;
+
+    foreach my $key ( sort keys(%unique) )
+    {
+
+        # count.
+        my $count = $unique{ $key };
+
+        # size for the HTML.
+        my $size = 10 + ( $count * 5 );
+        $size = 40 if ( $size >= 40 );
+
+        push( @$results,
+              {  tag   => $key,
+                 count => $count,
+                 size  => $size
+              } );
+    }
+    return $results;
+
+}
+
+
+
+=begin doc
+
+  Find each of the distinct Month + Year pairs for entries which
+ have been created.
+
+=end doc
+
+=cut
+
+sub findAllMonths
+{
+    my %allDates;
+    foreach my $f ( keys %data )
+    {
+        my $h = $data{ $f };
+        next if ( !$h );
+
+        my $date = $h->{ 'date' };
+
+        #
+        #  Not a date?  Use the ctime of the file.
+        #
+        if ( !defined($date) || !length($date) )
+        {
+
+            #
+            # Test the file for creation time.
+            #
+            my ( $dev,   $ino,     $mode, $nlink, $uid,
+                 $gid,   $rdev,    $size, $atime, $mtime,
+                 $ctime, $blksize, $blocks
+               ) = stat($f);
+
+            $date = localtime($ctime);
+        }
+
+        $date = time2str( "%Y-%m", str2time($date) );
+
+        $allDates{ $date } += 1;
+    }
+
+    return (%allDates);
+}
+
+
+
+=begin doc
+
+  Create a data structure which can be used for our archive layout.
+
+  This is a little messy too.  It mostly comes because we want to
+ have a nested loop so that we can place our entries in a nice manner.
+
+=end doc
+
+=cut
+
+sub createDateCloud
+{
+    my (%entry_dates) = (@_);
+
+    my $results;
+    my $year;
+    my $months;
+
+    foreach my $date ( sort keys %entry_dates )
+    {
+        next unless ( $date =~ /^([0-9]{4})-([0-9]{2})/ );
+
+        if ( $year and $1 ne $year )
+        {
+            push( @$results,
+                  {  year   => $year,
+                     months => $months
+                  } );
+            undef $months;
+        }
+        $year = $1;
+
+        push( @$months,
+              {  month      => $2,
+                 month_name => $names[$2 - 1],
+                 count      => $entry_dates{ $date } } );
+
+    }
+
+    push( @$results,
+          {  year   => $year,
+             months => $months
+          } );
+
+    #
+    #  Make sure this is sorted by reverse chronological order.
+    #
+    my @sorted = sort {$b->{ 'year' } <=> $a->{ 'year' }} @$results;
+    return \@sorted;
+}
+
+
+
+=begin doc
+
+  Sort by date.
+
+=end doc
+
+=cut
+
+sub bywhen
+{
+
+    #
+    #  Parse and return the date
+    #
+    my ( $ss1, $mm1, $hh1, $day1, $month1, $year1, $zone1 ) =
+      strptime( $a->{ 'pubdate' } );
+    my ( $ss2, $mm2, $hh2, $day2, $month2, $year2, $zone2 ) =
+      strptime( $b->{ 'pubdate' } );
+
+    #
+    # Abort if we didn't work.
+    #
+    die "Couldn't find first year:  $a->{'date'}" unless defined($year1);
+    die "Couldn't find second year: $b->{'date'}" unless defined($year2);
+
+    #
+    #  Convert to compare
+    #
+    my $c = timelocal( $ss1, $mm1, $hh1, $day1, $month1, $year1 + 1900 );
+    my $d = timelocal( $ss2, $mm2, $hh2, $day2, $month2, $year2 + 1900 );
+
+    return $d <=> $c;
+}
+
+
+
+=begin doc
+
+  Output the index page + index RSS feed.
+
+=end doc
+
+=cut
+
+sub outputIndexPage
+{
+
+    #
+    #  Holder for the blog entries.
+    #
+    my $entries;
+
+    #
+    #  Find all the entries and sort them to be most recent first.
+    #
+    my $tmp;
+    foreach my $file ( keys(%data) )
+    {
+        my $blog = readBlogEntry($file);
+
+        if ( $blog->{ 'body' } =~ /<cut/i )
+        {
+            $blog->{ 'body' } =
+              processCut( $blog->{ 'body' }, $blog->{ 'link' } );
+        }
+
+        push( @$tmp, $blog ) if ( keys(%$blog) );
+    }
+    my @tmp2 = sort bywhen @$tmp;
+
+    #
+    #  The number of entries to display upon the index.
+    #
+    my $max = $CONFIG{ 'entry-count' };
+    foreach my $f (@tmp2)
+    {
+        push( @$entries, $f ) if ( $max > 0 );
+        $max -= 1;
+    }
+
+    #
+    #  Open the index template.
+    #
+    my $template = loadTemplate( "index.template", die_on_bad_params => 0 );
+
+
+    #
+    # create the calendar if we can.
+    #
+    my $calendar = createCalendar();
+    if ( defined($calendar) )
+    {
+        my $text = $calendar->as_HTML();
+
+        $text =~ s/<\/?b>//g;
+        $text =~ s/<\/?p>//g;
+
+        $template->param( calendar       => 1,
+                          calendar_month => $text );
+    }
+
+
+    #
+    #  The entries.
+    #
+    $template->param( entries => $entries )
+      if ($entries);
+
+    #
+    #  The clouds
+    #
+    $template->param( tagcloud => $CLOUD{ 'tag' } )
+      if ( $CLOUD{ 'tag' } );
+    $template->param( datecloud => $CLOUD{ 'archive' } )
+      if ( $CLOUD{ 'archive' } );
+
+    #
+    #  Blog title and subtitle, if present.
+    #
+    $template->param( blog_title => $CONFIG{ 'blog_title' } )
+      if ( $CONFIG{ 'blog_title' } );
+    $template->param( blog_subtitle => $CONFIG{ 'blog_subtitle' } )
+      if ( $CONFIG{ 'blog_subtitle' } );
+    $template->param( release => $RELEASE );
+
+
+    #
+    #  Page to use
+    #
+    my $index = $CONFIG{ 'filename' } || "index.html";
+
+    outputTemplate( $template, $index );
+
+    #
+    #  Output the RSS feed
+    #
+    $template = loadTemplate( "index.xml.template", die_on_bad_params => 0 );
+    $template->param( blog_title => $CONFIG{ 'blog_title' } )
+      if ( $CONFIG{ 'blog_title' } );
+    $template->param( blog_subtitle => $CONFIG{ 'blog_subtitle' } )
+      if ( $CONFIG{ 'blog_subtitle' } );
+    $template->param( entries => $entries ) if ($entries);
+    outputTemplate( $template, "index.rss" );
+}
+
+
+
+=begin doc
+
+  Write out a /tags/$foo/index.html containing each blog entry which has the
+ tag '$foo'.
+
+=end doc
+
+=cut
+
+sub outputTagPage
+{
+    my ($tagName) = (@_);
+
+    my $dir = "tags/$tagName";
+
+    my %allTags;
+    my %tagEntries;
+    foreach my $f ( keys %data )
+    {
+        my $h = $data{ $f };
+        my $tags = $h->{ 'tags' } || undef;
+        foreach my $t (@$tags)
+        {
+            my $name = $t->{ 'tag' };
+            $allTags{ $name } += 1;
+            my $a = $tagEntries{ $name };
+            push @$a, $f;
+            $tagEntries{ $name } = $a;
+        }
+    }
+
+    my $matching = $tagEntries{ $tagName };
+
+    my $entries;
+
+    #
+    #  Now read the matching entries.
+    #
+    foreach my $f ( sort @$matching )
+    {
+        my $blog = readBlogEntry($f);
+        if ( keys(%$blog) )
+        {
+            if ( $blog->{ 'body' } =~ /<cut/i )
+            {
+                $blog->{ 'body' } =
+                  processCut( $blog->{ 'body' }, $blog->{ 'link' } );
+            }
+
+            $CONFIG{ 'verbose' } && print "\tAdded: $f\n";
+            push( @$entries, $blog );
+        }
+    }
+
+    #
+    #  Sort the entries by date
+    #
+    my @sortedEntries = reverse sort bywhen @$entries;
+
+    #
+    #  Now write the output as a HTML page.
+    #
+    my $template = loadTemplate( "tags.template", die_on_bad_params => 0 );
+
+    #
+    #  The entries.
+    #
+    $template->param( entries => \@sortedEntries ) if (@sortedEntries);
+    $template->param( tagname => $tagName );
+    $template->param( release => $RELEASE );
+
+    #
+    #  The clouds
+    #
+    $template->param( tagcloud => $CLOUD{ 'tag' } )
+      if ( $CLOUD{ 'tag' } );
+    $template->param( datecloud => $CLOUD{ 'archive' } )
+      if ( $CLOUD{ 'archive' } );
+
+    #
+    #  Blog title and subtitle, if present.
+    #
+    $template->param( blog_title => $CONFIG{ 'blog_title' } )
+      if ( $CONFIG{ 'blog_title' } );
+    $template->param( blog_subtitle => $CONFIG{ 'blog_subtitle' } )
+      if ( $CONFIG{ 'blog_subtitle' } );
+
+
+    #
+    #  Page to use
+    #
+    my $index = $CONFIG{ 'filename' } || "index.html";
+
+    outputTemplate( $template, "$dir/$index" );
+
+    #
+    #  Now output the .xml file
+    #
+    $template = loadTemplate( "tags.xml.template", die_on_bad_params => 0 );
+    $template->param( blog_title => $CONFIG{ 'blog_title' } )
+      if ( $CONFIG{ 'blog_title' } );
+    $template->param( entries => \@sortedEntries ) if (@sortedEntries);
+    $template->param( tagname => $tagName )        if ($tagName);
+    outputTemplate( $template, "$dir/$tagName.rss" );
+}
+
+
+
+=begin doc
+
+  Output the archive page for the given Month + Year.
+
+  This function is a *mess* and iterates over the data structure much
+ more often than it needs to.
+
+=end doc
+
+=cut
+
+sub outputArchivePage
+{
+    my ($date) = (@_);
+
+    #
+    #  Should we abort?
+    #
+    if ( $CONFIG{ 'no-archive' } )
+    {
+        $CONFIG{ 'verbose' } && print "Ignoring archive page, as instructed.\n";
+        return;
+    }
+
+
+    my $year  = '';
+    my $month = '';
+    if ( $date =~ /^([0-9]{4})-([0-9]{2})/ )
+    {
+        $year  = $1;
+        $month = $2;
+    }
+
+    #
+    #  Make the directory
+    #
+    my $dir = "archive/$year/$month";
+
+    my $entries;
+
+
+    my %dateEntries;
+    foreach my $f ( keys %data )
+    {
+        my $h    = $data{ $f };
+        my $date = $h->{ 'date' };
+
+        #
+        #  Not a date?  Use the file.
+        #
+        if ( !defined($date) || !length($date) )
+        {
+
+            #
+            # Test the file for creation time.
+            #
+            my ( $dev,   $ino,     $mode, $nlink, $uid,
+                 $gid,   $rdev,    $size, $atime, $mtime,
+                 $ctime, $blksize, $blocks
+               ) = stat($f);
+
+            $date = localtime($ctime);
+        }
+
+        $date = time2str( "%Y-%m", str2time($date) );
+
+        push @{ $dateEntries{ $date } }, $f;
+    }
+
+
+    my $matching = $dateEntries{ $date };
+    foreach my $f ( reverse @$matching )
+    {
+        $CONFIG{ 'verbose' } && print "\tAdded: $f\n";
+
+        my $blog = readBlogEntry($f);
+        if ( keys(%$blog) )
+        {
+
+            #
+            #  Test for the cut in a quick fashion.
+            #
+            if ( $blog->{ 'body' } =~ /<cut/i )
+            {
+
+                #
+                #  Properly process a "cut"
+                #
+                $blog->{ 'body' } =
+                  processCut( $blog->{ 'body' }, $blog->{ 'link' } );
+            }
+            push( @$entries, $blog );
+        }
+    }
+
+    #
+    #  Sort the entries by date
+    #
+    my @sortedEntries = reverse sort bywhen @$entries;
+
+    #
+    #  Now write the output as a HTML page.
+    #
+    my $template = loadTemplate( "month.template", die_on_bad_params => 0 );
+    $template->param( release => $RELEASE );
+
+
+    #
+    #  The entries
+    #
+    $template->param( entries => \@sortedEntries ) if (@sortedEntries);
+
+    #
+    #  Output the month + year.
+    #
+    $template->param( year => $year, month => $month );
+    $template->param( month_name => $names[$month - 1] );
+
+    #
+    #  The clouds
+    #
+    $template->param( tagcloud => $CLOUD{ 'tag' } )
+      if ( $CLOUD{ 'tag' } );
+    $template->param( datecloud => $CLOUD{ 'archive' } )
+      if ( $CLOUD{ 'archive' } );
+
+    #
+    #  Blog title and subtitle, if present.
+    #
+    $template->param( blog_title => $CONFIG{ 'blog_title' } )
+      if ( $CONFIG{ 'blog_title' } );
+    $template->param( blog_subtitle => $CONFIG{ 'blog_subtitle' } )
+      if ( $CONFIG{ 'blog_subtitle' } );
+
+    #
+    #  Page to use
+    #
+    my $index = $CONFIG{ 'filename' } || "index.html";
+    outputTemplate( $template, "$dir/$index" );
+
+    #
+    #  Now the RSS page.
+    #
+    $template = loadTemplate( "month.xml.template", die_on_bad_params => 0 );
+    $template->param( blog_title => $CONFIG{ 'blog_title' } )
+      if ( $CONFIG{ 'blog_title' } );
+    $template->param( entries => \@sortedEntries ) if (@sortedEntries);
+    $template->param( month => $month, year => $year );
+    $template->param( month_name => $names[$month - 1] );
+    outputTemplate( $template, "$dir/$month.rss" );
+}
+
+
+
+=begin doc
+
+  Process the body for any present cut tags which might be present.
+
+  The cut text looks like this:
+
+=for example begin
+
+   Blah blah
+   This is visible
+   <cut [text="xx"]>
+   This is hidden
+   So is this
+   </cut>
+   This is visible
+
+=for example end
+
+=end doc
+
+=cut
+
+sub processCut
+{
+    my ( $body, $link ) = (@_);
+
+    $link = $CONFIG{ 'url_prefix' } . $link;
+
+    my $cut_text = "";
+
+    if ( $body =~ /(.*)<cut([^>]*)>(.*)<\/cut>(.*)/gis )
+    {
+        my $pre  = $1;
+        my $cut  = $2;
+        my $hid  = $3;
+        my $post = $4;
+
+        #
+        #  See if they supplied text="xxxxx"
+        #
+        if ( defined($cut) && ( $cut =~ /text=['"]([^'"]+)['"]/i ) )
+        {
+            $cut_text = $1;
+        }
+
+        $body = $pre;
+
+        if ( !length($cut_text) )
+        {
+            $cut_text = "This entry has been cut, click to read on.";
+        }
+        $body .= " <a href=\"$link\">$cut_text</a> ";
+        $body .= $post;
+
+    }
+
+    return ($body);
+}
+
+
+
+=begin doc
+
+  Output static page.
+
+=end doc
+
+=cut
+
+sub outputStaticPage
+{
+    my ($filename) = (@_);
+
+    #
+    #  Load the template
+    #
+    my $template = loadTemplate( "entry.template", die_on_bad_params => 0 );
+    $template->param( release => $RELEASE );
+
+    #
+    #  Just the name of the file.
+    #
+    my $basename = $filename;
+    if ( $basename =~ /(.*)\/(.*)/ )
+    {
+        $basename = $2;
+    }
+    if ( $basename =~ /^(.*)\.(.*)$/ )
+    {
+        $basename = $1;
+    }
+
+    #
+    #  Read the entry
+    #
+    my $static = readBlogEntry($filename);
+
+    #
+    #  Get the pieces of information.
+    #
+    my $title = $static->{ 'title' } || $basename;
+    my $tags  = $static->{ 'tags' };
+    my $body  = $static->{ 'body' };
+    my $date  = $static->{ 'date' };
+
+    if ( !defined($date) )
+    {
+        my ( $dev,   $ino,     $mode, $nlink, $uid,
+             $gid,   $rdev,    $size, $atime, $mtime,
+             $ctime, $blksize, $blocks
+           ) = stat($filename);
+
+        $date = localtime($ctime);
+    }
+
+    $CONFIG{ 'verbose' } && print "\t$filename\n";
+
+    #
+    #  Convert to suitable filename.
+    #
+    my $file = fileToTitle($title);
+
+
+    #
+    #  Get comments, if present.
+    #
+    if ( !$CONFIG{ 'no-comments' } )
+    {
+        my $comments = getComments( $CONFIG{ 'comments' }, $file );
+
+        if ( defined($comments) )
+        {
+            my $count  = scalar(@$comments);
+            my $plural = 1;
+            $plural = 0 if ( $count == 1 );
+
+            $template->param( comments       => $comments,
+                              comment_count  => $count,
+                              comment_plural => $plural
+                            );
+
+            $CONFIG{ 'verbose' } &&
+              print "$file [$filename] has $count comments\n";
+        }
+
+        #
+        #  If we have no date restrictions then enable comments
+        #
+        if ( $CONFIG{ 'comment-days' } == 0 )
+        {
+            $template->param( comments_enabled => 1 );
+        }
+        else
+        {
+
+            #
+            #  The number of seconds past the epoch of today and the
+            # date the blog is supposed to be published is used.
+            #
+            my $time  = str2time($date);
+            my $today = time;
+
+            #
+            #  The number of days that should be allowd.
+            #
+            my $days = $CONFIG{ 'comment-days' } * 60 * 60 * 24;
+
+            if ( ( $time + $days ) > $today )
+            {
+                $CONFIG{ 'verbose' } &&
+                  print "Comments allowed on post dated $date.\n";
+                $template->param( comments_enabled => 1 );
+            }
+            else
+            {
+                $CONFIG{ 'verbose' } &&
+                  print "Comments disabled on post dated $date.\n";
+            }
+        }
+    }
+
+
+    #
+    #  The entry.
+    #
+    $template->param( title => $title );
+    $template->param( tags  => $tags ) if ($tags);
+    $template->param( date  => $date ) if ($date);
+    $template->param( body  => $body );
+    $template->param( link  => $static->{ 'link' } );
+
+    #
+    #  Our clouds
+    #
+    $template->param( tagcloud => $CLOUD{ 'tag' } ) if ( $CLOUD{ 'tag' } );
+    $template->param( datecloud => $CLOUD{ 'archive' } )
+      if ( $CLOUD{ 'archive' } );
+
+    #
+    #  Blog title and subtitle, if present.
+    #
+    $template->param( blog_title => $CONFIG{ 'blog_title' } )
+      if ( $CONFIG{ 'blog_title' } );
+    $template->param( blog_subtitle => $CONFIG{ 'blog_subtitle' } )
+      if ( $CONFIG{ 'blog_subtitle' } );
+
+    outputTemplate( $template, $file );
+}
+
+
+
+=begin doc
+
+  Return a hash of interesting data from our blog file.
+
+=end doc
+
+=cut
+
+sub readBlogEntry
+{
+    my ($filename) = (@_);
+
+    my %entry;
+
+    #
+    #  Do we have the memcached module available?
+    #
+    my $cache = undef;
+    my $test  = "use Cache::Memcached;";
+    eval($test);
+    if ( ( !$@ ) && ( !$CONFIG{ 'no-cache' } ) )
+    {
+
+        # create the cache object
+        $cache = new Cache::Memcached { 'servers' => ["localhost:11211"] };
+
+        # fetch from the cache if it is present.
+        my $cached = $cache->get("file_$filename");
+        if ( defined($cached) )
+        {
+            $CONFIG{ 'verbose' } && print "memcache-get: $filename\n";
+            return ( \%$cached );
+        }
+        else
+        {
+            $CONFIG{ 'verbose' } && print "memcache-fail: $filename\n";
+        }
+    }
+
+
+    my $title   = "";    # entry title.
+    my $format  = "";    # entry format
+    my $tags    = "";    # entry tags.
+    my $body    = "";    # entry body.
+    my $date    = "";    # entry date
+    my $publish = "";    # entry publish date - *ignored*
+
+    #
+    #  Read the actual entry
+    #
+    open( ENTRY, "<", $filename ) or die "Failed to read $filename $!";
+    while ( my $line = <ENTRY> )
+    {
+
+        #
+        #  Get the tags.
+        #
+        if ( ( $line =~ /^tags:(.*)/i ) && !length($tags) )
+        {
+            $tags = $1;
+        }
+        elsif ( ( $line =~ /^publish:(.*)/i ) && !length($publish) )
+        {
+            $publish = $1;
+            $publish =~ s/^\s+// if ( length $publish );
+            $publish =~ s/\s+$// if ( length $publish );
+        }
+        elsif ( ( $line =~ /^format:(.*)/i ) && !length($format) )
+        {
+            $format = $1;
+            if ( length $format )
+            {
+                $format =~ s/^\s+//;
+                $format =~ s/\s+$//;
+                $format = lc($format);
+            }
+        }
+        elsif ( ( $line =~ /^(Subject|Title):(.*)/i ) && !length($title) )
+        {
+
+            #
+            # Get the title, strip leading and trailing space.
+            #
+            $title = $2;
+            $title =~ s/^\s+// if ( length $title );
+            $title =~ s/\s+$// if ( length $title );
+        }
+        elsif ( ( $line =~ /^date:(.*)/i ) && !length($date) )
+        {
+
+            #
+            #  Get the date, strip leading and trailing space.
+            #
+            $date = $1;
+            $date =~ s/^\s+// if ( length $date );
+            $date =~ s/\s+$// if ( length $date );
+        }
+        else
+        {
+
+            #
+            #  Just a piece of body text.
+            #
+            $body .= $line;
+        }
+    }
+    close(ENTRY);
+
+    #
+    # MJR - embargo the entry until the publish if it
+    # is in the future.
+    #
+    # Steve prefers using chronicle-spooler, but I want
+    # uploaded files to stay where I put them, else I get
+    # my local copy confused.
+    #
+    if ( ( $publish ne "" ) && ( str2time($publish) > time() ) )
+    {
+        $CONFIG{ 'verbose' } &&
+          print
+          "Skipping future entry $filename - due to be published on $publish\n";
+        return 0;
+    }
+
+
+
+    #
+    #  If we didn't have a per-entry format then revert to the
+    # global one, if any.
+    #
+    if ( !length($format) )
+    {
+        if ( $CONFIG{ 'format' } )
+        {
+            $format = lc( $CONFIG{ 'format' } );
+        }
+        else
+        {
+            $format = 'html';
+        }
+    }
+
+
+
+    #
+    #  Determine the input format to use.
+    #
+    #
+    #  Now process accordingly.
+    #
+    if ( $format eq 'html' )
+    {
+
+        # nop
+    }
+    elsif ( $format eq 'markdown' )
+    {
+        $body = markdown2HTML($body);
+    }
+    elsif ( $format eq 'textile' )
+    {
+        $body = textile2HTML($body);
+    }
+    else
+    {
+        print "Unknown blog entry format ($CONFIG{'format'}).\n";
+        print "Treating as HTML.\n";
+    }
+
+    #
+    #
+    #  If we have tags then we should use them.
+    #
+    my $entryTags;
+    my @tmpTags;
+
+    foreach my $tag ( split( /,/, $tags ) )
+    {
+
+        # strip leading and trailing space.
+        $tag =~ s/^\s+//;
+        $tag =~ s/\s+$//;
+
+        # skip empty tags.
+        next if ( !length($tag) );
+
+        # tags are lowercase.
+        $tag = lc($tag);
+
+        # store the tag away - so we can have a sorted list later.
+        push( @tmpTags, $tag );
+    }
+
+    #
+    #  Push the sorted tags into the entry
+    #
+    foreach my $t ( sort @tmpTags )
+    {
+        push( @$entryTags, { tag => $t } );
+    }
+
+
+    #
+    #  If the date isn't set then use todays.
+    #
+    if ( !defined($date) || ( !length($date) ) )
+    {
+        my @lt = localtime(time);
+        $date = strftime( "%d %B %Y", @lt );
+    }
+
+    #
+    #  Get the Hours::Mins::Seconds from the Date: pseudo-header
+    #
+    my $time = str2time($date);
+    my $hms  = time2str( "%H:%M:%S", $time );
+    my $tz   = time2str( "%z", $time );
+
+
+    #
+    #  If the time is missing from the Date: pseudo-header
+    # we need to magic them up.  Use the mtime of the file.
+    #
+    if ( $hms eq '00:00:00' )
+    {
+
+        #
+        #  Find all the details from the file.
+        #
+        my ( $dev,   $ino,     $mode, $nlink, $uid,
+             $gid,   $rdev,    $size, $atime, $mtime,
+             $ctime, $blksize, $blocks
+           ) = stat($filename);
+
+
+        $hms = time2str( "%H:%M:%S", $mtime );
+        $tz = "GMT";
+    }
+
+
+    #
+    #  If we found a time then we're OK, and can store it away.
+    #
+    if ($time)
+    {
+
+        #
+        #  RSS 2
+        #
+        $entry{ 'pubdate' } = time2str( "%a, %e %b %Y $hms $tz", $time );
+        $entry{ 'pubdate' } =~ s/  +/ /g;
+
+        #
+        # Store the W3C date form
+        # http://www.w3.org/TR/NOTE-datetime
+        #
+        my $w3ctz = $tz;
+        $w3ctz =~ s/([-+]\d\d)(\d\d)/$1:$2/;
+        $entry{ 'w3cdate' } = time2str( "%Y-%m-%dT${hms}$w3ctz", $time );
+
+    }
+    else
+    {
+        print "Failed to parse date: '$date' to generate pubDate of entry.\n";
+    }
+
+    #
+    #  Store the entry.
+    #
+    $entry{ 'title' } = $title;
+    $entry{ 'body' }  = $body if ($body);
+    $entry{ 'date' }  = $date;
+    $entry{ 'tags' }  = $entryTags if ($entryTags);
+
+
+    #
+    #  No title?
+    #
+    if ( !defined( $entry{ 'title' } ) ||
+         !length( $entry{ 'title' } ) )
+    {
+        my $basename = $filename;
+        if ( $basename =~ /(.*)\/(.*)/ )
+        {
+            $basename = $2;
+        }
+        if ( $basename =~ /^(.*)\.(.*)$/ )
+        {
+            $basename = $1;
+        }
+
+        $entry{ 'title' } = $basename;
+    }
+
+    #
+    #  Get the link - after ensuring we have a title.
+    #
+    my $link = fileToTitle( $entry{ 'title' } );
+    $entry{ 'link' } = $link;
+
+    #
+    #  Count comments.
+    #
+    $entry{ 'comment_count' } =
+      countComments( $CONFIG{ 'comments' }, $entry{ 'link' } );
+    if ( defined $entry{ 'comment_count' } &&
+         $entry{ 'comment_count' } != 1 )
+    {
+        $entry{ 'comment_plural' } = 1;
+    }
+
+    #
+    #  Store the read file in the cache if we're using it.
+    #
+    if ( defined($cache) )
+    {
+        $CONFIG{ 'verbose' } && print "memcache-set: $filename\n";
+        $cache->set( "file_$filename", \%entry );
+    }
+    return \%entry;
+}
+
+
+
+=begin doc
+
+  Create a filename for an URL which does not contain unsafe
+ characters.
+
+=end doc
+
+=cut
+
+sub fileToTitle
+{
+    my ($file) = (@_);
+
+    #
+    #  Get rid of non-alphanumeric Al characters
+    #
+    $file =~ s/[^a-z0-9]/_/gi;
+
+    my $suffix = $CONFIG{ 'suffix' } || ".html";
+    $file .= $suffix;
+
+    #
+    #  Lower case?
+    #
+    $file = lc($file) if ( $CONFIG{ 'lower-case' } );
+
+    return ($file);
+
+}
+
+
+
+=begin doc
+
+  Look for comments, for the given entry.  Return any found in a format
+ suitable for the insertion into the output templates.
+
+=end doc
+
+=cut
+
+sub getComments
+{
+    my ( $dir, $title ) = (@_);
+
+    my $results;
+
+    if ( $title =~ /^(.*)\.([^.]+)$/ )
+    {
+        $title = $1;
+    }
+
+    #
+    #  Find each comment file.
+    #
+    my @entries;
+    foreach my $file ( sort( glob( $dir . "/" . $title . "*" ) ) )
+    {
+        push( @entries, $file );
+    }
+
+    #
+    # Sort them into order.
+    #
+    @entries = sort {( stat($a) )[9] <=> ( stat($b) )[9]} @entries;
+
+    #
+    #  Now process them.
+    #
+    foreach my $file (@entries)
+    {
+        my $date    = "";
+        my $name    = "";
+        my $body    = "";
+        my $mail    = "";
+        my $pubdate = "";
+
+        if ( $file =~ /^(.*)\.([^.]+)$/ )
+        {
+            $date = $2;
+
+            if ( $date =~ /(.*)-([0-9:]+)/ )
+            {
+                my $d = $1;
+                my $t = $2;
+
+                $d =~ s/-/ /g;
+
+                $date = "Submitted at $t on $d";
+            }
+        }
+
+        open( COMMENT, "<", $file ) or
+          next;
+
+        foreach my $line (<COMMENT>)
+        {
+            next if ( !defined($line) );
+
+            chomp($line);
+
+            next if ( $line =~ /^IP-Address:/ );
+            next if ( $line =~ /^User-Agent:/ );
+
+            if ( !length($name) && $line =~ /^Name: (.*)/i )
+            {
+                $name = $1;
+            }
+            elsif ( !length($mail) && $line =~ /^Mail: (.*)/i )
+            {
+                $mail = $1;
+            }
+            else
+            {
+                $body .= $line . "\n";
+            }
+        }
+        close(COMMENT);
+
+        if ( length($name) &&
+             length($mail) &&
+             length($body) )
+        {
+            push( @$results,
+                  {  name => $name,
+                     mail => $mail,
+                     body => $body,
+                     date => $date,
+                  } );
+
+        }
+    }
+
+    return ($results);
+}
+
+
+
+=begin doc
+
+  Count the number of comments associated with a given post.
+
+=end doc
+
+=cut
+
+sub countComments
+{
+    my ( $dir, $title ) = (@_);
+
+    return (0) if ( $CONFIG{ 'no-comments' } );
+
+    if ( $title =~ /^(.*)\.([^.]+)$/ )
+    {
+        $title = $1;
+    }
+
+    my $count = 0;
+    foreach my $f ( sort glob( $dir . "/" . $title . "*" ) )
+    {
+        $count += 1;
+    }
+
+    return ($count);
+}
+
+
+
+=begin doc
+
+  Load a template file.
+
+=end doc
+
+=cut
+
+sub loadTemplate
+{
+    my ( $file, %params ) = (@_);
+
+    #
+    #  Get the directory.
+    #
+    my $dir = $CONFIG{ 'theme-dir' };
+
+    #
+    #  XML files go in theme-dir/xml/
+    #
+    if ( $file =~ /\.xml\./i )
+    {
+        $dir .= "/xml/";
+    }
+    else
+    {
+        $dir .= "/" . $CONFIG{ 'theme' } . "/";
+    }
+
+    #
+    #  Make sure the file exists.
+    #
+    if ( !-e $dir . $file )
+    {
+        print <<EOF;
+
+  The template file $file was not found in the theme directory.
+
+  Theme          : $CONFIG{'theme'}
+  Theme Directory: $CONFIG{'theme-dir'}
+
+  We expected to find $dir$file;
+
+  Aborting.
+EOF
+        exit;
+    }
+
+    my $t = HTML::Template->new( filename          => $file,
+                                 path              => $dir,
+                                 loop_context_vars => 1,
+                                 global_vars       => 1,
+                                 %params
+                               );
+
+    return ($t);
+}
+
+
+
+=begin doc
+
+  Set URL for top directory and output a template.
+
+=end doc
+
+=cut
+
+sub outputTemplate
+{
+    my ( $template, $path ) = (@_);
+
+    my $reltop = $path;
+    $reltop =~ s'[^/]+/'../'g;
+    $reltop =~ s'[^/]*$'';
+    $template->param( reltop => $reltop );
+
+    #
+    # Select relative/absolute URL prefix.
+    #
+    my $top;
+    if ( $CONFIG{ 'url_prefix' } )
+    {
+        $top = $CONFIG{ 'url_prefix' };
+    }
+    else
+    {
+        $top = $reltop;
+    }
+    $template->param( top => $top );
+
+    open( OUTPUT, ">", "$CONFIG{'output'}/$path" );
+    print OUTPUT $template->output();
+    close(OUTPUT);
+}
+
+
+
+=begin doc
+
+  Read the specified configuration file if it exists.
+
+=end doc
+
+=cut
+
+sub readConfigurationFile
+{
+    my ($file) = (@_);
+
+    #
+    #  If it doesn't exist ignore it.
+    #
+    return if ( !-e $file );
+
+
+    my $line = "";
+
+    open( FILE, "<", $file ) or die "Cannot read file '$file' - $!";
+    while ( defined( $line = <FILE> ) )
+    {
+        chomp $line;
+        if ( $line =~ s/\\$// )
+        {
+            $line .= <FILE>;
+            redo unless eof(FILE);
+        }
+
+        # Skip lines beginning with comments
+        next if ( $line =~ /^([ \t]*)\#/ );
+
+        # Skip blank lines
+        next if ( length($line) < 1 );
+
+        # Strip trailing comments.
+        if ( $line =~ /(.*)\#(.*)/ )
+        {
+            $line = $1;
+        }
+
+        # Find variable settings
+        if ( $line =~ /([^=]+)=([^\n]+)/ )
+        {
+            my $key = $1;
+            my $val = $2;
+
+            # Strip leading and trailing whitespace.
+            $key =~ s/^\s+//;
+            $key =~ s/\s+$//;
+            $val =~ s/^\s+//;
+            $val =~ s/\s+$//;
+
+            # command expansion?
+            if ( $val =~ /(.*)`([^`]+)`(.*)/ )
+            {
+
+                # store
+                my $pre  = $1;
+                my $cmd  = $2;
+                my $post = $3;
+
+                # get output
+                my $output = `$cmd`;
+                chomp($output);
+
+                # build up replacement.
+                $val = $pre . $output . $post;
+            }
+
+            # Store value.
+            $CONFIG{ $key } = $val;
+        }
+    }
+
+    close(FILE);
+}
+
+
+
+=begin doc
+
+  Sanity check our arguments, and setup to make sure there is nothing
+ obviously broken.
+
+=end doc
+
+=cut
+
+sub sanityCheckArguments
+{
+
+    #
+    #  Make sure we have an input directory.
+    #
+    if ( !-d $CONFIG{ 'input' } )
+    {
+        print <<EOF;
+
+  The blog input directory $CONFIG{'input'} does not exist.
+
+  Aborting.
+EOF
+
+        exit;
+    }
+
+    if ( !$CONFIG{ 'theme-dir' } )
+    {
+        print <<EOF;
+
+  Error - You don't have a theme directory setup.
+
+  Please specify --theme-dir=/some/path, or add this to your configuration
+ file:
+
+theme-dir = /path/to/use/
+EOF
+
+        exit;
+    }
+
+    if ( !-d $CONFIG{ 'theme-dir' } )
+    {
+        print "The theme directory you specified doesn't exist:\n";
+        print "\t" . $CONFIG{ 'theme-dir' } . "\n";
+        exit;
+    }
+
+    if ( !$CONFIG{ 'theme' } )
+    {
+        print <<EOF;
+
+  You've not specified a theme.
+
+  Please specify --theme=xx
+
+  Or add this to your configuration file:
+
+theme = xx
+
+
+  [You may list themes with --list-themes]
+
+EOF
+
+        exit;
+    }
+
+
+    if ( !-d $CONFIG{ 'theme-dir' } . "/" . $CONFIG{ 'theme' } )
+    {
+        print
+          "The theme directory you specified doesn't exist in the theme directory:\n";
+        print "\tTheme    :" . $CONFIG{ 'theme' } . "\n";
+        print "\tTheme dir:" . $CONFIG{ 'theme-dir' } . "\n";
+        print "\tExpected :" . $CONFIG{ 'theme-dir' } . "/" .
+          $CONFIG{ 'theme' } . "\n";
+        exit;
+    }
+
+}
+
+
+
+=begin doc
+
+  Copy any static files from the theme directory into the "live" location
+ in the output.
+
+  This only works for a top-level target directory.
+
+  Unless --force is specified we skip copying files which already exist.
+
+=end doc
+
+=cut
+
+sub copyStaticFiles
+{
+
+    #
+    #  Source and destination for the copy
+    #
+    my $input  = $CONFIG{ 'theme-dir' } . "/" . $CONFIG{ 'theme' };
+    my $output = $CONFIG{ 'output' };
+
+    foreach my $pattern (qw! *.css *.jpg *.gif *.png *.js *.ico !)
+    {
+        foreach my $file ( glob( $input . "/" . $pattern ) )
+        {
+
+            #
+            #  Get the name of the file.
+            #
+            if ( $file =~ /(.*)\/(.*)/ )
+            {
+                $file = $2;
+            }
+            if ( $CONFIG{ 'force' } || ( !-e "$output/$file" ) )
+            {
+                $CONFIG{ 'verbose' } && print "Copying static file: $file\n";
+                copy( "$input/$file", "$output/$file" );
+            }
+        }
+    }
+}
+
+
+
+=begin doc
+
+  Convert from markdown to HTML.
+
+=end doc
+
+=cut
+
+sub markdown2HTML
+{
+    my ($text) = (@_);
+
+    #
+    #  Make sure we have the module installed.  Use eval to
+    # avoid making this mandatory.
+    #
+    my $test = "use Text::Markdown;";
+
+    #
+    #  Test loading the module.
+    #
+    eval($test);
+    if ($@)
+    {
+        print <<EOF;
+
+  You have chosen to format your input text via Markdown, but the
+ Perl module Text::Markdown is not installed.
+
+  Aborting.
+EOF
+        exit;
+    }
+
+    #
+    #  Convert.
+    #
+    $text = Text::Markdown::markdown($text);
+    return ($text);
+}
+
+
+
+=begin doc
+
+  Convert from textile to HTML.
+
+=end doc
+
+=cut
+
+sub textile2HTML
+{
+    my ($text) = (@_);
+
+    #
+    #  Make sure we have the module installed.  Use eval to
+    # avoid making this mandatory.
+    #
+    my $test = "use Text::Textile;";
+
+    #
+    #  Test loading the module.
+    #
+    eval($test);
+    if ($@)
+    {
+        print <<EOF;
+
+  You have chosen to format your input text via Textile, but the
+ Perl module Text::Textile is not installed.
+
+  Aborting.
+EOF
+        exit;
+    }
+
+    #
+    #  Convert.
+    #
+    $text = Text::Textile::textile($text);
+    return ($text);
+}
+
+
+=begin doc
+
+  List the names of all globally installed themes.
+
+=end doc
+
+=cut
+
+sub listThemes
+{
+    my ($dir) = (@_);
+
+    $CONFIG{ 'verbose' } && print "Listing themes beneath : $dir\n";
+
+    foreach my $name ( sort( glob( $dir . "/*" ) ) )
+    {
+        next unless ( -d $name );
+
+        next if ( $name =~ /\/xml$/ );
+
+        if ( $name =~ /^(.*)\/([^\/\\]*)$/ )
+        {
+            print $2 . "\n";
+        }
+    }
+}
+
+
+
+=begin doc
+
+Create and configure a calendar for the index, if and only iff the
+HTML::CalendarMonthSimple module is installed.
+
+=end doc
+
+=cut
+
+sub createCalendar
+{
+
+    #
+    #  Attempt to load the module.
+    #
+    my $test = "use HTML::CalendarMonthSimple;";
+    eval($test);
+
+    #
+    #  If there was an error, or the calendar is disabled then
+    # return undef.
+    #
+    if ( ($@) || ( $CONFIG{ 'no-calendar' } ) )
+    {
+        return undef;
+    }
+
+    #
+    #  Continue
+    #
+    my $cal = new HTML::CalendarMonthSimple();
+
+    # configuration of the calendar
+    $cal->border(0);
+    $cal->weekstartsonmonday(1);
+    $cal->showweekdayheaders(1);
+    $cal->sunday('Sun');
+    $cal->saturday('Sat');
+    $cal->weekdays( 'Mo', 'Tue', 'We', 'Thu', 'Fr' );
+
+    # get 4th element from localtime aka month in form of (0..11)
+    my $curmonth = (localtime)[4] + 1;
+
+    foreach my $f (%data)
+    {
+        my $h = $data{ $f };
+        next if ( !$h );
+        my $entrydate = $h->{ 'date' };
+
+        if ( !$entrydate )
+        {
+            my ( $dev,   $ino,     $mode, $nlink, $uid,
+                 $gid,   $rdev,    $size, $atime, $mtime,
+                 $ctime, $blksize, $blocks
+               ) = stat($f);
+
+            $entrydate = localtime($ctime);
+        }
+
+        my $date = time2str( "%Y-%m-%d", str2time($entrydate) );
+        my ( $year, $month, $day ) = split( /-/, $date );
+
+
+        if ( $month eq $curmonth )
+        {
+            $cal->setdatehref( $day, fileToTitle( $data{ $f }->{ 'title' } ) );
+        }
+    }
+    return ($cal);
+}

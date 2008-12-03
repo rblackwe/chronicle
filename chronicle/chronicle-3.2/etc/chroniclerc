@@ -1,0 +1,131 @@
+##
+#  Configuration file for the chronicle blog compiler.
+##
+
+
+##
+#
+#  When the compiler starts it will look for both:
+#
+#    /etc/chroniclerc
+#
+#  and
+#
+#    ~/.chroniclerc
+#
+#  Both files will be read if present, the latter may override the former.
+#
+####
+
+
+
+
+#
+#  Input directory
+# 
+input = ./blog
+
+
+#
+#  The pattern of files to include
+#
+# pattern = *.txt
+#
+
+
+#
+#  Output directory to write the blog to
+#
+output = ./output
+
+
+#
+#  Directory containing the theme subdirectories.
+#
+theme-dir = /usr/share/chronicle/themes
+
+#
+#  The theme to use.
+#
+theme = default
+
+
+#
+#  The number of entries to include on the index.
+#
+# entry-count = 10
+#
+
+
+#
+#  Here we specify the format the blog entries are written in.
+#
+#  Valid choices are:
+#
+#   html
+#   ----
+#    The blog entries aren't touched and are inserted as-is.
+#
+#   markdown
+#   --------
+#    The blog entries are converted from markdown -> html then output.
+#
+#   textile
+#   -------
+#    The blog entries are converted from textile -> html then output.
+#
+# format = html
+#
+
+
+#
+#  We can parts of the output if we wish
+#
+#  no-tags     = 1
+#  no-archive  = 1
+#  no-calendar = 1
+no-comments = 1
+#
+
+
+#
+#  The maximum age of posts which are allowed to accept comments.
+#
+# comment-days = 10
+
+#
+#  The filename to use for tag links
+#
+# filename = index.html
+#
+
+
+#
+#  Suffix to use for single entries.
+#
+# suffix = .html
+
+
+#
+#  URL prefix, if any.
+#
+# url_prefix = http://example.com/
+
+
+#
+#  The title for the Blog
+#
+# blog_title    = Steve Kemp's Blog
+# blog_subtitle = Free Software & Debian
+
+#
+#  A command to run pre-build
+#
+# pre-build = cvs update -A -d
+
+
+#
+#  A command to run post-build.
+#
+# post-build = scp -r output/* user@host:/some/path
+#
